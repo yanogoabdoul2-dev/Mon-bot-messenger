@@ -7,14 +7,14 @@ const app = express();
 app.use(bodyParser.json());
 
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
-const PAGE_TOKEN = process.env.PAGE_ACCESS_TOKEN;
 const VERIFY_TOKEN = process.env.VERIFY_TOKEN || "yanogo123";
+const WHATSAPP_TOKEN = process.env.WHATSAPP_TOKEN;
+const PHONE_NUMBER_ID = process.env.PHONE_NUMBER_ID;
 
 app.get('/', (req, res) => {
-  res.send('Bot Messenger est en ligne!');
+  res.send('Bot WhatsApp Business est en ligne!');
 });
 
-// Pour verification Facebook
 app.get('/webhook', (req, res) => {
   const mode = req.query['hub.mode'];
   const token = req.query['hub.verify_token'];
@@ -27,30 +27,33 @@ app.get('/webhook', (req, res) => {
   }
 });
 
-// Reception des messages
 app.post('/webhook', async (req, res) => {
   const body = req.body;
-  if (body.object === 'page') {
+  if (body.object === 'whatsapp_business_account') {
     for (const entry of body.entry) {
-      const event = entry.messaging[0];
-      if (event.message && event.message.text) {
-        const senderId = event.sender.id;
-        const userText = event.message.text;
-        try {
-          // Appel Groq
-          const completion = await groq.chat.completions.create({
-            model: "llama-3.1-8b-instant",
-            messages: [
-              { role: "system", content: "Tu es un assistant amical et utile qui répond en français. Réponds court et utile." },
-              { role: "user", content: userText }
-            ],
-            max_tokens: 500
-          });
-          const reply = completion.choices[0].message.content;
-          await sendMessage(senderId, reply);
-        } catch (err) {
-          console.error(err);
-          await sendMessage(senderId, "Désolé, erreur avec l'IA. Réessaie.");
+      for (const change of entry.changes) {
+        if (change.field === 'messages' && change.value.messages) {
+          const msg = change.value.messages[0];
+          const from = msg.from;
+          const text = msg.text? msg.text.body : "";
+          if (text) {
+            try {
+              const completion = await groq.chat.completions.create({
+                model: "llama-3.1-8b-instant",
+                messages: [
+                  { role: "system", content: "Tu es l'assistant Yanogo Business, expert e-commerce au Burkina. Réponds court, amical, en français." },
+                  { role: "user", content: text }
+                ],
+                max_tokens: 400
+              });
+              const reply = completion.choices[0].message.content;
+              await axios.post(`https://graph.facebook.com/v19.0/${PHONE_NUMBER_ID}/messages`, {
+                messaging_product: "whatsapp",
+                to: from,
+                text: { body: reply.substring(0,1000) }
+              }, { headers: { Authorization: `Bearer ${WHATSAPP_TOKEN}` } });
+            } catch(e){ console.error(e.message); }
+          }
         }
       }
     }
@@ -60,12 +63,5 @@ app.post('/webhook', async (req, res) => {
   }
 });
 
-async function sendMessage(senderId, text) {
-  await axios.post(`https://graph.facebook.com/v19.0/me/messages?access_token=${PAGE_TOKEN}`, {
-    recipient: { id: senderId },
-    message: { text: text.substring(0, 1900) }
-  });
-}
-
 const PORT = process.env.PORT || 10000;
-app.listen(PORT, () => console.log(`Serveur sur port ${PORT}`));
+app.listen(PORT, () => console.log(`Serveur WhatsApp sur port ${PORT}`));
